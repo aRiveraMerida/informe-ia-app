@@ -46,4 +46,4 @@ echo "📍 URL: http://localhost:8501"
 echo ""
 
 # Iniciar Streamlit
-streamlit run app_pro.py
+streamlit run app.py

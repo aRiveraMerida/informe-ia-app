@@ -1,362 +1,586 @@
+"""
+Generador de Informes Ejecutivos con IA — Versión Profesional
+Análisis cuantitativo + cualitativo (Claude) + Gráficos + PDF/DOCX
+"""
 import streamlit as st
-import pandas as pd
-import anthropic
-from io import BytesIO
-import json
+import os
 import time
+from datetime import datetime, timedelta
+import logging
 
-# Configuración de la página
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+from modules import (
+    DataProcessor,
+    QuantitativeAnalyzer,
+    ClaudeAnalyzer,
+    PDFReportGenerator,
+    DOCXReportGenerator,
+    PPTXReportGenerator,
+    ChartGenerator,
+    validate_quality,
+    prompt_manager,
+    config,
+    styles,
+    session_state,
+)
+from modules.report_chart_extractor import generate_charts_for_report
+
+# ─── Configuración de página ─────────────────────────────────────────────────
+
 st.set_page_config(
-    page_title="Generador de Informes con IA",
-    page_icon="📊",
-    layout="wide"
+    page_title="Movimer — Informes con IA",
+    page_icon="LogoMovimer.png",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
-# Estilos CSS personalizados
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: 700;
-        color: #1F4E78;
-        margin-bottom: 0.5rem;
-    }
-    .sub-header {
-        font-size: 1.2rem;
-        color: #666;
-        margin-bottom: 2rem;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 10px;
-        color: white;
-        margin-bottom: 1rem;
-    }
-    .stButton>button {
-        background-color: #1F4E78;
-        color: white;
-        font-weight: 600;
-        padding: 0.75rem 2rem;
-        border-radius: 8px;
-        border: none;
-        transition: all 0.3s;
-    }
-    .stButton>button:hover {
-        background-color: #2E5C8A;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(31, 78, 120, 0.3);
-    }
-    .info-box {
-        background-color: #E7F3FF;
-        padding: 1.5rem;
-        border-radius: 8px;
-        border-left: 4px solid #1F4E78;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.markdown(styles.APP_CSS, unsafe_allow_html=True)
+session_state.init_session_state()
 
-# Título principal
-st.markdown('<div class="main-header">📊 Generador de Informes con IA</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Transforma tus datos en informes ejecutivos profesionales en segundos</div>', unsafe_allow_html=True)
+# ─── Header ──────────────────────────────────────────────────────────────────
 
-# Sidebar para configuración
+import base64, pathlib
+_logo_path = pathlib.Path(__file__).parent / "LogoMovimer.png"
+if _logo_path.exists():
+    _logo_b64 = base64.b64encode(_logo_path.read_bytes()).decode()
+    st.markdown(
+        f'<div class="logo-container"><img src="data:image/png;base64,{_logo_b64}" alt="Movimer"></div>',
+        unsafe_allow_html=True,
+    )
+
+st.markdown(
+    '<div class="main-header">Generador de Informes Ejecutivos con IA</div>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    '<div class="sub-header">Analisis cuantitativo + estrategico con IA / Graficos / PDF / DOCX / PPTX</div>',
+    unsafe_allow_html=True,
+)
+
+# ─── Sidebar — Configuración ─────────────────────────────────────────────────
+
 with st.sidebar:
-    st.header("⚙️ Configuración")
-    
-    # Input para API Key
-    api_key = st.text_input(
-        "API Key de Anthropic",
+    st.header("Configuracion")
+
+    # API Key
+    st.markdown("### API Key de Claude")
+    default_api_key = ""
+    try:
+        default_api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        pass
+    if not default_api_key:
+        default_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+
+    api_key_input = st.text_input(
+        "API Key",
         type="password",
-        help="Obtén tu API key en https://console.anthropic.com"
+        value=default_api_key,
+        help="Tu API key de Anthropic",
+        key="api_key_input",
     )
-    
+    api_key = api_key_input or default_api_key
+
+    if api_key:
+        st.success("API Key configurada")
+    else:
+        st.warning("API Key requerida")
+
     st.markdown("---")
-    
-    # Selector de modelo
-    model = st.selectbox(
-        "Modelo de IA",
-        ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-20250514"],
-        help="Sonnet 4 ofrece el mejor equilibrio calidad-velocidad"
-    )
-    
-    # Opciones de análisis
-    st.markdown("### 📋 Opciones de Análisis")
-    
-    include_charts = st.checkbox("Incluir visualizaciones", value=False, 
-                                  help="Próximamente: gráficos integrados")
-    
-    detailed_analysis = st.checkbox("Análisis profundo", value=True,
-                                     help="Incluye recomendaciones estratégicas detalladas")
-    
+
+    # Modelo
+    st.markdown("### Modelo de IA")
+    model = st.selectbox("Modelo", config.MODELS, index=0)
+    pricing = config.MODEL_PRICING[model]
+    st.caption(f"Precio: ${pricing['input']} / ${pricing['output']} por MTok (in/out)")
+
     st.markdown("---")
-    
-    # Información
-    with st.expander("ℹ️ Cómo usar esta app"):
+
+    # Metadatos del informe
+    st.markdown("### Metadatos del Informe")
+    client_name = st.text_input("Nombre del Cliente", value="Cliente Ejemplo S.A.")
+
+    st.markdown("**Periodo Analizado**")
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        fecha_inicio = st.date_input(
+            "Fecha inicio",
+            value=datetime.now().date() - timedelta(days=30),
+            format="DD/MM/YYYY",
+        )
+    with col_f2:
+        fecha_fin = st.date_input(
+            "Fecha fin", value=datetime.now().date(), format="DD/MM/YYYY"
+        )
+    period = f"{fecha_inicio.strftime('%d/%m/%Y')} - {fecha_fin.strftime('%d/%m/%Y')}"
+    st.caption(f"Periodo: {period}")
+
+    report_type = st.selectbox("Tipo de Informe", config.REPORT_TYPES)
+
+    st.markdown("---")
+
+    # Logos
+    st.markdown("### Personalizacion PDF")
+    use_logos = st.checkbox("Incluir logos", value=False)
+    company_logo = None
+    client_logo = None
+
+    if use_logos:
+        company_logo_file = st.file_uploader(
+            "Logo empresa (portada)",
+            type=["png", "jpg", "jpeg"],
+            key="company_logo",
+        )
+        client_logo_file = st.file_uploader(
+            "Logo cliente (pie)", type=["png", "jpg", "jpeg"], key="client_logo"
+        )
+        if company_logo_file:
+            company_logo = f"/tmp/company_logo_{int(time.time())}.png"
+            with open(company_logo, "wb") as f:
+                f.write(company_logo_file.read())
+        if client_logo_file:
+            client_logo = f"/tmp/client_logo_{int(time.time())}.png"
+            with open(client_logo, "wb") as f:
+                f.write(client_logo_file.read())
+
+    st.markdown("---")
+
+    with st.expander("Como funciona"):
         st.markdown("""
-        **Pasos:**
-        1. Introduce tu API key de Anthropic
-        2. Sube un archivo Excel (.xlsx)
-        3. La IA analizará automáticamente los datos
-        4. Descarga tu informe profesional en DOCX
-        
-        **Formatos soportados:**
-        - Excel (.xlsx, .xls)
-        - CSV (.csv)
-        
-        **Tipos de análisis:**
-        - Encuestas de satisfacción
-        - Datos de ventas
-        - Métricas de rendimiento
-        - Análisis competitivo
-        """)
-    
-    with st.expander("🔒 Seguridad y privacidad"):
-        st.markdown("""
-        - Tu API key no se almacena
-        - Los archivos se procesan en memoria
-        - Los datos no se guardan en servidor
-        - Comunicación encriptada con Anthropic
+        1. **Carga** tu archivo Excel/CSV (cualquier dataset)
+        2. **Genera** análisis cuantitativo + ejecutivo con IA
+        3. Los gráficos se generan **automáticamente** desde las tablas del informe
+        4. **Descarga** PDF o DOCX con gráficos integrados
         """)
 
-# Área principal
+# ─── Área principal — Subida de archivo ──────────────────────────────────────
+
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    # Upload de archivo
-    st.markdown("### 📁 Subir archivo de datos")
+    st.markdown("### Subir Archivo de Datos")
     uploaded_file = st.file_uploader(
-        "Arrastra tu archivo Excel o CSV aquí",
-        type=['xlsx', 'xls', 'csv'],
-        help="Sube el archivo con los datos que quieres analizar"
+        "Arrastra tu archivo Excel o CSV",
+        type=["xlsx", "xls", "csv"],
+        help="Soporta cualquier dataset tabular, múltiples hojas",
     )
 
 with col2:
     if uploaded_file:
-        st.markdown("### ✅ Archivo cargado")
-        st.success(f"**{uploaded_file.name}**")
-        
-        # Mostrar información del archivo
-        file_size = len(uploaded_file.getvalue()) / 1024
-        st.info(f"Tamaño: {file_size:.1f} KB")
+        st.markdown("### Archivo Cargado")
+        file_size_kb = len(uploaded_file.getvalue()) / 1024
+        st.info(f"**{uploaded_file.name}**\n\nTamaño: {file_size_kb:.1f} KB")
 
-# Previsualización de datos
-if uploaded_file:
+        if st.session_state.file_content is None:
+            session_state.store_file(uploaded_file.getvalue(), uploaded_file.name)
+
+# ─── Funciones con caché ─────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False)
+def _process_file(file_content: bytes, filename: str):
+    """Procesa el archivo una sola vez y cachea el resultado."""
+    processor = DataProcessor(file_content, filename)
+    return processor.process(), processor.get_sample_data(n=5)
+
+# ─── Vista previa de datos ───────────────────────────────────────────────────
+
+if uploaded_file and not st.session_state.analysis_complete:
     st.markdown("---")
-    st.markdown("### 👀 Vista previa de datos")
-    
+    st.markdown("### Vista Previa de Datos")
+
     try:
-        # Leer archivo según extensión
-        if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
+        result, samples = _process_file(st.session_state.file_content, st.session_state.filename)
+
+        if result["success"]:
+            metadata = result["metadata"]
+
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.metric("Hojas", metadata["_global"]["total_sheets"])
+            with col_m2:
+                st.metric("Filas totales", f"{metadata['_global']['total_rows']:,}")
+            with col_m3:
+                st.metric("Columnas totales", metadata["_global"]["total_columns"])
+            with col_m4:
+                completeness = sum(
+                    meta["completeness_pct"]
+                    for sheet, meta in metadata.items()
+                    if sheet != "_global"
+                ) / max(1, len([k for k in metadata.keys() if k != "_global"]))
+                st.metric("Completitud", f"{completeness:.1f}%")
+
+            for sheet_name, df_sample in samples.items():
+                with st.expander(
+                    f"Hoja: {sheet_name} ({len(result['sheets'][sheet_name])} filas)"
+                ):
+                    st.dataframe(df_sample, width='stretch')
+
+            # Validación de calidad de datos
+            quality = validate_quality(result["sheets"])
+            st.markdown("### Calidad de Datos")
+            qcol1, qcol2, qcol3 = st.columns(3)
+            with qcol1:
+                st.metric("Score", f"{quality.score}/100 {quality.status_emoji}")
+            with qcol2:
+                st.metric("Estado", quality.status.capitalize())
+            with qcol3:
+                st.metric("Incidencias", quality.total_issues)
+
+            if quality.issues:
+                with st.expander(f"Ver {quality.total_issues} incidencias detectadas"):
+                    for issue in quality.issues:
+                        icon = {"error": "❌", "warning": "⚠️", "info": "ℹ️"}.get(issue.severity, "")
+                        st.markdown(f"{icon} **{issue.message}**")
+                        if issue.detail:
+                            st.caption(issue.detail)
         else:
-            df = pd.read_excel(uploaded_file)
-        
-        # Información básica
-        col_info1, col_info2, col_info3 = st.columns(3)
-        with col_info1:
-            st.metric("📊 Filas", f"{len(df):,}")
-        with col_info2:
-            st.metric("📋 Columnas", f"{len(df.columns)}")
-        with col_info3:
-            st.metric("💾 Hojas", f"{len(pd.ExcelFile(uploaded_file).sheet_names) if not uploaded_file.name.endswith('.csv') else 1}")
-        
-        # Mostrar primeras filas
-        st.dataframe(df.head(10), use_container_width=True)
-        
-        # Resetear el puntero del archivo para procesamiento posterior
-        uploaded_file.seek(0)
-        
+            st.error(f"Error: {result.get('error', 'Error desconocido')}")
+
     except Exception as e:
-        st.error(f"Error al leer el archivo: {str(e)}")
+        st.error(f"Error: {e}")
 
-# Botón de generación de informe
-st.markdown("---")
+# ─── Editor de prompt maestro ────────────────────────────────────────────────────
 
-if uploaded_file and api_key:
-    col_btn1, col_btn2, col_btn3 = st.columns([1, 2, 1])
-    
-    with col_btn2:
-        if st.button("🚀 Generar Informe Ejecutivo", use_container_width=True):
-            with st.spinner("🤖 La IA está analizando tus datos..."):
+if uploaded_file and not st.session_state.analysis_complete:
+    st.markdown("---")
+    st.markdown("### Prompt Maestro")
+
+    with st.expander("Editar prompt (avanzado)", expanded=False):
+        st.markdown(
+            '<div class="prompt-info">Edita el prompt que se envía a Claude. '
+            "Si lo borras completamente, se restaurará el prompt por defecto.</div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(prompt_manager.get_variables_help())
+
+        current_prompt = (
+            st.session_state.custom_prompt
+            or prompt_manager.get_prompt(report_type=report_type)
+        )
+        edited_prompt = st.text_area(
+            "Prompt",
+            value=current_prompt,
+            height=400,
+            key="prompt_editor",
+            label_visibility="collapsed",
+        )
+
+        col_p1, col_p2 = st.columns(2)
+        with col_p1:
+            if st.button("Guardar prompt personalizado"):
+                st.session_state.custom_prompt = edited_prompt
+                st.success("Prompt guardado")
+        with col_p2:
+            if st.button("Restaurar prompt por defecto"):
+                st.session_state.custom_prompt = None
+                st.success("Prompt restaurado al valor por defecto")
+                st.rerun()
+
+# ─── Botón de generación ─────────────────────────────────────────────────────
+
+if uploaded_file and api_key and not st.session_state.analysis_complete:
+    st.markdown("---")
+
+    col_btn = st.columns([1, 2, 1])
+    with col_btn[1]:
+        # Estimación de coste
+        try:
+            analyzer_est = ClaudeAnalyzer(api_key)
+            estimated_cost = analyzer_est.estimate_cost_before_call(
+                len(st.session_state.file_content), model
+            )
+            st.caption(f"Coste estimado: ${estimated_cost:.4f} USD")
+        except Exception:
+            pass
+
+        if st.button("Generar Informe Completo", use_container_width=True, type="primary"):
+            progress_container = st.container()
+
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
                 try:
-                    # Inicializar cliente de Anthropic
-                    client = anthropic.Anthropic(api_key=api_key)
-                    
-                    # Leer archivo y convertir a base64
-                    file_content = uploaded_file.read()
-                    import base64
-                    file_base64 = base64.standard_b64encode(file_content).decode('utf-8')
-                    
-                    # Determinar tipo de archivo
-                    if uploaded_file.name.endswith('.csv'):
-                        media_type = "text/csv"
-                    elif uploaded_file.name.endswith('.xlsx'):
-                        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    else:
-                        media_type = "application/vnd.ms-excel"
-                    
-                    # Crear mensaje para Claude
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-                    
-                    status_text.text("📊 Analizando estructura de datos...")
-                    progress_bar.progress(20)
-                    
-                    prompt = """Analiza este archivo de datos y genera un informe ejecutivo profesional en formato DOCX.
+                    # 1. Procesar datos
+                    status_text.info("Procesando archivo...")
+                    progress_bar.progress(10)
 
-El informe debe incluir:
-
-1. **Resumen Ejecutivo**: Métricas clave en tabla visual, principales hallazgos
-2. **Análisis de Datos**: Desglose detallado por categorías relevantes
-3. **Insights Estratégicos**: Identificación de patrones, tendencias y áreas críticas
-4. **Análisis Comparativo**: Si hay datos de competencia o benchmarks
-5. **Recomendaciones**: Plan de acción con prioridades (corto, medio, largo plazo)
-
-**Formato:**
-- Usa tablas para datos numéricos
-- Destaca métricas clave con formato visual
-- Estructura clara con headings jerárquicos
-- Incluye análisis cualitativo, no solo números
-- Proporciona contexto empresarial y aplicabilidad
-
-**Estilo:**
-- Profesional y orientado a resultados
-- Insights accionables, no descripciones genéricas
-- Identifica oportunidades y riesgos
-- Usa visualización de datos con tablas bien formateadas
-
-Genera el documento DOCX completo y compártelo para descarga."""
-
-                    status_text.text("🧠 Claude está procesando los datos...")
-                    progress_bar.progress(40)
-                    
-                    # Llamada a la API
-                    message = client.messages.create(
-                        model=model,
-                        max_tokens=16000,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "document",
-                                        "source": {
-                                            "type": "base64",
-                                            "media_type": media_type,
-                                            "data": file_base64
-                                        }
-                                    },
-                                    {
-                                        "type": "text",
-                                        "text": prompt
-                                    }
-                                ]
-                            }
-                        ]
+                    processor = DataProcessor(
+                        st.session_state.file_content, st.session_state.filename
                     )
-                    
-                    status_text.text("📝 Generando informe ejecutivo...")
-                    progress_bar.progress(70)
-                    
-                    # Extraer respuesta
-                    response_text = ""
-                    for block in message.content:
-                        if block.type == "text":
-                            response_text += block.text
-                    
-                    status_text.text("✨ Finalizando documento...")
-                    progress_bar.progress(100)
-                    
-                    # Mostrar resultado
-                    st.success("✅ ¡Informe generado exitosamente!")
-                    
-                    # Crear tabs para mostrar contenido
-                    tab1, tab2 = st.tabs(["📄 Vista Previa", "💾 Descargar"])
-                    
-                    with tab1:
-                        st.markdown("### Análisis de Claude")
-                        st.markdown(response_text)
-                    
-                    with tab2:
-                        st.markdown("### 📥 Descargar Informe")
-                        
-                        # Aquí normalmente incluirías el archivo .docx generado
-                        # Por ahora mostramos el texto
-                        st.info("""
-                        **Nota:** Para obtener el archivo DOCX completo, Claude necesita acceso a herramientas 
-                        de creación de documentos. El análisis completo se ha generado arriba.
-                        
-                        En una implementación completa, aquí aparecería el botón de descarga del archivo .docx
-                        """)
-                        
-                        # Crear archivo de texto como alternativa
-                        txt_content = f"""INFORME EJECUTIVO
-Generado por IA - {time.strftime('%Y-%m-%d %H:%M:%S')}
+                    processed_data = processor.process()
 
-{response_text}
-"""
-                        st.download_button(
-                            label="📄 Descargar como TXT",
-                            data=txt_content,
-                            file_name=f"informe_{uploaded_file.name.split('.')[0]}_{time.strftime('%Y%m%d')}.txt",
-                            mime="text/plain"
-                        )
-                    
-                    # Limpiar
+                    if not processed_data["success"]:
+                        st.error(f"Error: {processed_data.get('error')}")
+                        st.stop()
+
+                    # 2. Analisis cuantitativo
+                    status_text.info("Analisis cuantitativo...")
+                    progress_bar.progress(20)
+
+                    quant_analyzer = QuantitativeAnalyzer(
+                        processed_data["sheets"], processed_data["metadata"]
+                    )
+                    quant_results = quant_analyzer.analyze()
+                    quant_report = quant_analyzer.format_for_report()
+
+                    # 3. Analisis con Claude (streaming)
+                    status_text.info(
+                        "Claude esta analizando los datos..."
+                    )
+                    progress_bar.progress(40)
+
+                    claude = ClaudeAnalyzer(api_key)
+                    report_metadata = {
+                        "client_name": client_name,
+                        "period": period,
+                        "report_type": report_type,
+                        "total_sheets": processed_data["metadata"]["_global"][
+                            "total_sheets"
+                        ],
+                        "total_records": processed_data["metadata"]["_global"][
+                            "total_rows"
+                        ],
+                    }
+
+                    # Streaming: mostrar respuesta en tiempo real
+                    stream_container = st.empty()
+                    streamed_text = []
+
+                    def _on_stream_chunk(chunk: str):
+                        streamed_text.append(chunk)
+                        stream_container.markdown("".join(streamed_text) + " ◌")
+
+                    claude_result = claude.analyze_data(
+                        file_content=st.session_state.file_content,
+                        filename=st.session_state.filename,
+                        quantitative_analysis=quant_report,
+                        report_metadata=report_metadata,
+                        model=model,
+                        max_tokens=config.DEFAULT_MAX_TOKENS,
+                        custom_prompt=st.session_state.custom_prompt,
+                        stream_callback=_on_stream_chunk,
+                    )
+
+                    stream_container.empty()
+
+                    if not claude_result["success"]:
+                        st.error(f"Error: {claude_result.get('error')}")
+                        st.stop()
+
+                    # 4. Generar graficos desde las tablas del informe
+                    status_text.info("Generando visualizaciones del informe...")
+                    progress_bar.progress(80)
+
+                    chart_gen = ChartGenerator(processed_data["sheets"])
+                    report_sections = generate_charts_for_report(
+                        markdown=claude_result["analysis"],
+                        chart_gen=chart_gen,
+                    )
+
+                    # Recopilar todas las imágenes de gráficos
+                    all_chart_images = []
+                    for sec in report_sections:
+                        all_chart_images.extend(sec.chart_images)
+
+                    progress_bar.progress(90)
+                    status_text.success("Analisis completado")
+
+                    # Guardar resultados
+                    session_state.store_analysis_results(
+                        processed_data=processed_data,
+                        quantitative_results={"results": quant_results, "report": quant_report},
+                        qualitative_results=claude_result,
+                        cost_summary=claude.get_cost_summary(),
+                    )
+                    session_state.store_chart_images(all_chart_images)
+                    st.session_state.report_sections = report_sections
+
+                    progress_bar.progress(100)
+                    time.sleep(0.3)
                     progress_bar.empty()
                     status_text.empty()
-                    
-                except anthropic.APIError as e:
-                    st.error(f"❌ Error de API: {str(e)}")
-                    st.info("Verifica que tu API key sea válida y tengas créditos disponibles")
+                    st.rerun()
+
                 except Exception as e:
-                    st.error(f"❌ Error inesperado: {str(e)}")
-                    st.info("Por favor, verifica el formato de tu archivo y vuelve a intentar")
+                    status_text.error(f"Error inesperado: {e}")
+                    logger.exception("Error durante el análisis")
+                    st.stop()
 
-elif uploaded_file and not api_key:
-    st.warning("⚠️ Por favor, introduce tu API Key de Anthropic en el panel lateral")
-elif api_key and not uploaded_file:
-    st.info("📁 Sube un archivo para comenzar el análisis")
-else:
-    # Mostrar landing cuando no hay datos
+# ─── Resultados ──────────────────────────────────────────────────────────────
+
+if st.session_state.analysis_complete:
     st.markdown("---")
-    col_feat1, col_feat2, col_feat3 = st.columns(3)
-    
-    with col_feat1:
-        st.markdown("### 🎯 Análisis Inteligente")
-        st.markdown("""
-        Claude analiza automáticamente tus datos identificando:
-        - Patrones y tendencias
-        - Áreas críticas
-        - Oportunidades de mejora
-        """)
-    
-    with col_feat2:
-        st.markdown("### 📊 Informes Profesionales")
-        st.markdown("""
-        Genera documentos ejecutivos con:
-        - Métricas clave visualizadas
-        - Insights accionables
-        - Recomendaciones estratégicas
-        """)
-    
-    with col_feat3:
-        st.markdown("### ⚡ Rápido y Seguro")
-        st.markdown("""
-        Procesamiento instantáneo:
-        - Segundos vs. horas
-        - Sin almacenamiento de datos
-        - Encriptación end-to-end
-        """)
+    st.markdown(
+        '<div class="success-box"><h2>Analisis Completado</h2></div>',
+        unsafe_allow_html=True,
+    )
 
-# Footer
+    # Métricas de coste
+    if st.session_state.cost_summary:
+        cs = st.session_state.cost_summary
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Coste Total", f"${cs['total_cost_usd']:.4f}")
+        with c2:
+            st.metric("Tokens Entrada", f"{cs['total_input_tokens']:,}")
+        with c3:
+            st.metric("Tokens Salida", f"{cs['total_output_tokens']:,}")
+        with c4:
+            st.metric("Modelo", model.split("-")[1].title())
+
+    st.markdown("---")
+
+    # Tabs de resultados
+    tabs = st.tabs(
+        [
+            "Informe Ejecutivo",
+            "Visualizaciones",
+            "Descargar DOCX",
+            "Descargar PDF",
+            "Descargar PPTX",
+        ]
+    )
+
+    with tabs[0]:
+        st.markdown("### Informe Ejecutivo")
+        if st.session_state.qualitative_results:
+            st.markdown(st.session_state.qualitative_results["analysis"])
+
+    with tabs[1]:
+        st.markdown("### Visualizaciones (generadas del informe)")
+        chart_imgs = st.session_state.get("chart_images", [])
+        if chart_imgs:
+            for title, png_bytes in chart_imgs:
+                st.markdown(f"**{title}**")
+                st.image(png_bytes, width='stretch')
+                st.markdown("---")
+        else:
+            st.info("El informe no contenia tablas con datos graficables.")
+
+    with tabs[2]:
+        st.markdown("### Descargar como DOCX")
+        st.info("Informe unificado con graficos integrados. Editable en Word.")
+
+        if st.button("Generar DOCX", key="btn_docx"):
+            with st.spinner("Generando DOCX..."):
+                try:
+                    docx_gen = DOCXReportGenerator(
+                        client_name=client_name,
+                        period=period,
+                        report_title="Informe Ejecutivo",
+                    )
+                    docx_bytes = docx_gen.generate(
+                        analysis_text=st.session_state.qualitative_results["analysis"],
+                        metadata={
+                            "total_records": st.session_state.processed_data[
+                                "metadata"
+                            ]["_global"]["total_rows"],
+                            **st.session_state.cost_summary,
+                        },
+                        quantitative_analysis=None,
+                        report_sections=st.session_state.get("report_sections"),
+                    )
+                    st.success("DOCX generado")
+                    st.download_button(
+                        label="Descargar DOCX",
+                        data=docx_bytes,
+                        file_name=f"informe_{client_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="download_docx",
+                    )
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    logger.exception("Error generando DOCX")
+
+    with tabs[3]:
+        st.markdown("### Descargar como PDF")
+        st.info("Informe con portada Movimer, analisis con graficos integrados.")
+
+        if st.button("Generar PDF", key="btn_pdf"):
+            with st.spinner("Generando PDF..."):
+                try:
+                    pdf_gen = PDFReportGenerator(
+                        client_name=client_name,
+                        period=period,
+                        report_title="Informe Ejecutivo",
+                        company_logo_path=company_logo,
+                        client_logo_path=client_logo,
+                    )
+                    pdf_bytes = pdf_gen.generate(
+                        quantitative_analysis="",
+                        qualitative_analysis=st.session_state.qualitative_results[
+                            "analysis"
+                        ],
+                        metadata=st.session_state.processed_data["metadata"]["_global"],
+                        cost_info=st.session_state.cost_summary,
+                        report_sections=st.session_state.get("report_sections"),
+                    )
+                    st.success("PDF generado")
+                    st.download_button(
+                        label="Descargar PDF",
+                        data=pdf_bytes,
+                        file_name=f"informe_{client_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        mime="application/pdf",
+                        key="download_pdf",
+                    )
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    logger.exception("Error generando PDF")
+
+    with tabs[4]:
+        st.markdown("### Descargar como PPTX")
+        st.info("Presentación ejecutiva con portada, secciones y gráficos integrados.")
+
+        if st.button("Generar PPTX", key="btn_pptx"):
+            with st.spinner("Generando PPTX..."):
+                try:
+                    pptx_gen = PPTXReportGenerator(
+                        client_name=client_name,
+                        period=period,
+                        report_title="Informe Ejecutivo",
+                    )
+                    pptx_bytes = pptx_gen.generate(
+                        analysis_text=st.session_state.qualitative_results["analysis"],
+                        metadata={
+                            "total_records": st.session_state.processed_data[
+                                "metadata"
+                            ]["_global"]["total_rows"],
+                            **st.session_state.cost_summary,
+                        },
+                        cost_info=st.session_state.cost_summary,
+                        report_sections=st.session_state.get("report_sections"),
+                    )
+                    st.success("PPTX generado")
+                    st.download_button(
+                        label="Descargar PPTX",
+                        data=pptx_bytes,
+                        file_name=f"informe_{client_name.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx",
+                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        key="download_pptx",
+                    )
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                    logger.exception("Error generando PPTX")
+
+    # Reiniciar
+    st.markdown("---")
+    if st.button("Analizar Otro Archivo"):
+        session_state.reset_session_state()
+        st.rerun()
+
+# ─── Footer ──────────────────────────────────────────────────────────────────
+
 st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 2rem 0;'>
-    <p>Potenciado por <strong>Claude 4.5</strong> de Anthropic</p>
-    <p style='font-size: 0.9rem;'>Desarrollado para análisis empresarial de alto impacto</p>
+st.markdown(
+    """
+<div style='text-align: center; padding: 2rem 0;'>
+    <p style='color: #575757; font-family: Open Sans, sans-serif; font-size: 0.85rem;'>
+        Movimer &middot; Analisis cuantitativo + Estrategia con IA + Visualizaciones
+    </p>
 </div>
-""", unsafe_allow_html=True)
-
+""",
+    unsafe_allow_html=True,
+)

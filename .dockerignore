@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+*.md
+!README.md
+.DS_Store
+*.pdf
+*.docx
+*.xlsx
+*.xls
+*.csv
+tests/
+WARP.md
+ENTREGA.md

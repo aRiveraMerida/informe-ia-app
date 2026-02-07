@@ -1,167 +1,158 @@
-# 📊 Generador de Informes Ejecutivos con IA
+# Generador de Informes Ejecutivos con IA
 
-Aplicación Streamlit que utiliza Claude 4.5 para transformar datos en informes ejecutivos profesionales automáticamente.
+Aplicación Streamlit que transforma datos Excel/CSV en informes ejecutivos profesionales combinando análisis cuantitativo determinista con análisis estratégico de IA (Claude). Exporta a PDF, DOCX y PPTX.
 
-## 🚀 Características
+## Requisitos
 
-- **Análisis automatizado** de archivos Excel y CSV
-- **Generación de informes ejecutivos** con estructura profesional
-- **Insights estratégicos** y recomendaciones accionables
-- **Interfaz intuitiva** diseñada para no-técnicos
-- **Procesamiento seguro** sin almacenamiento de datos
+- Python 3.8+
+- API Key de [Anthropic](https://console.anthropic.com)
 
-## 📋 Requisitos Previos
-
-- Python 3.8 o superior
-- API Key de Anthropic ([obtener aquí](https://console.anthropic.com))
-
-## 🛠️ Instalación
-
-### Opción 1: Instalación local
+## Inicio rápido
 
 ```bash
-# 1. Clonar o descargar los archivos
-# 2. Crear entorno virtual (recomendado)
+./start.sh
+```
+
+El script crea el entorno virtual, instala dependencias y lanza la aplicación.
+
+## Instalación manual
+
+```bash
 python -m venv venv
-
-# 3. Activar entorno virtual
-# En Windows:
-venv\Scripts\activate
-# En Mac/Linux:
-source venv/bin/activate
-
-# 4. Instalar dependencias
+source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# 5. Ejecutar la aplicación
 streamlit run app.py
 ```
 
-### Opción 2: Deploy en Streamlit Cloud
+La aplicación se abrirá en `http://localhost:8501`.
 
-1. Sube los archivos a un repositorio de GitHub
-2. Ve a [share.streamlit.io](https://share.streamlit.io)
-3. Conecta tu repositorio
-4. La app se desplegará automáticamente
+## Configuración
 
-## 📖 Uso
+### API Key
 
-1. **Configurar API Key**: Introduce tu API key de Anthropic en el panel lateral
-2. **Subir datos**: Arrastra tu archivo Excel o CSV
-3. **Generar informe**: Haz clic en "Generar Informe Ejecutivo"
-4. **Descargar resultado**: Obtén tu informe en formato TXT (próximamente DOCX)
+Se puede configurar de tres formas (en orden de prioridad):
 
-## 📁 Estructura de Archivos
+1. **Streamlit Secrets** — en `.streamlit/secrets.toml`:
+   ```toml
+   ANTHROPIC_API_KEY = "sk-ant-..."
+   ```
+2. **Variable de entorno**:
+   ```bash
+   export ANTHROPIC_API_KEY='sk-ant-...'
+   ```
+3. **Campo en la UI** — panel lateral de la aplicación.
+
+### Modelos disponibles
+
+| Modelo | Input ($/MTok) | Output ($/MTok) | Uso |
+|--------|---------------|-----------------|-----|
+| Sonnet 4 | 3.00 | 15.00 | Balance calidad/precio (recomendado) |
+| Opus 4 | 15.00 | 75.00 | Máxima calidad |
+| Haiku 4 | 0.80 | 4.00 | Más económico |
+
+## Estructura del proyecto
 
 ```
-.
-├── app.py              # Aplicación principal de Streamlit
-├── requirements.txt    # Dependencias de Python
-└── README.md          # Este archivo
+app.py                          # Aplicación principal Streamlit
+modules/
+├── config.py                   # Configuración: modelos, precios, tema
+├── styles.py                   # CSS de la aplicación
+├── session_state.py            # Gestión de estado de sesión
+├── prompt_manager.py           # Plantillas de prompts editables
+├── data_processor.py           # Lectura y normalización de Excel/CSV
+├── quantitative_analyzer.py    # KPIs, correlaciones, tendencias (sin IA)
+├── claude_analyzer.py          # Análisis con Claude (streaming) + costes
+├── chart_generator.py          # Gráficos matplotlib
+├── report_chart_extractor.py   # Extracción de gráficos del informe
+├── validators.py               # Validación de calidad de datos
+├── pdf_generator.py            # Generación de PDF (ReportLab)
+├── docx_generator.py           # Generación de DOCX (python-docx)
+└── pptx_generator.py           # Generación de PPTX (python-pptx)
+prompts/                        # Plantillas de prompt por tipo de informe
+tests/                          # Tests automatizados (pytest)
+requirements.txt
+start.sh                        # Script de inicio rápido
+Dockerfile                      # Despliegue Docker
+docker-compose.yml
+Procfile                        # Despliegue Heroku
+.streamlit/config.toml          # Configuración de Streamlit
+LogoMovimer.png                 # Logo corporativo
 ```
 
-## 🔒 Seguridad y Privacidad
+## Despliegue
 
-- Las API keys se manejan en memoria, nunca se almacenan
-- Los archivos se procesan temporalmente y se eliminan después
-- No se guardan datos en servidores
-- Comunicación encriptada con la API de Anthropic
+### Streamlit Cloud (gratuito)
 
-## 🎯 Tipos de Análisis Soportados
+1. Sube el repositorio a GitHub.
+2. Ve a [share.streamlit.io](https://share.streamlit.io) y conecta tu cuenta.
+3. Crea nueva app seleccionando el repositorio, branch `main`, archivo `app.py`.
+4. En **Advanced settings → Secrets**, añade:
+   ```toml
+   ANTHROPIC_API_KEY = "sk-ant-..."
+   ```
+5. Haz clic en **Deploy**.
 
-- ✅ Encuestas de satisfacción del cliente
-- ✅ Datos de ventas y KPIs comerciales
-- ✅ Métricas de rendimiento operacional
-- ✅ Análisis competitivo
-- ✅ Cualquier dataset tabular con headers
+La app se actualizará automáticamente con cada `git push`.
 
-## 🔧 Personalización
+### Docker
 
-### Modificar el prompt de análisis
-
-Edita la variable `prompt` en `app.py` (línea ~200) para ajustar el tipo de análisis:
-
-```python
-prompt = """Tu prompt personalizado aquí..."""
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8501
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
+ENTRYPOINT ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
 ```
 
-### Cambiar el modelo de IA
-
-En el sidebar, selecciona entre:
-- `claude-sonnet-4-20250514` (recomendado: equilibrio calidad/velocidad)
-- `claude-opus-4-20250514` (máxima calidad)
-- `claude-haiku-4-20250514` (máxima velocidad)
-
-## 📊 Ejemplo de Salida
-
-El informe generado incluye:
-
-1. **Resumen Ejecutivo** con métricas clave
-2. **Análisis de Contactabilidad** (si aplica)
-3. **Satisfacción y Recomendación**
-4. **Análisis Competitivo**
-5. **Intención de Recompra**
-6. **Recomendaciones Estratégicas**
-
-## 🐛 Troubleshooting
-
-### Error: "Invalid API Key"
-- Verifica que tu API key sea correcta
-- Asegúrate de tener créditos disponibles en tu cuenta
-
-### Error al leer archivo
-- Verifica que el archivo sea .xlsx, .xls o .csv
-- Asegúrate de que el archivo no esté corrupto
-- Revisa que tenga headers en la primera fila
-
-### La app no carga
 ```bash
-# Reinstalar dependencias
-pip install -r requirements.txt --upgrade
-
-# Limpiar caché de Streamlit
-streamlit cache clear
+docker build -t informe-ia .
+docker run -e ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY -p 8501:8501 informe-ia
 ```
 
-## 🚀 Próximas Mejoras
+### Docker Compose
 
-- [ ] Generación de archivos DOCX completos
-- [ ] Gráficos y visualizaciones integradas
-- [ ] Plantillas personalizables de informes
-- [ ] Exportación a PowerPoint
-- [ ] Análisis multiidioma
-- [ ] Comparación histórica de datasets
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    restart: unless-stopped
+```
 
-## 💡 Casos de Uso
+### Heroku
 
-### Marketing y Ventas
-- Análisis de campañas
-- Satisfacción del cliente (NPS, CSAT)
-- Pipeline de ventas
+```bash
+heroku create mi-informe-ia
+heroku config:set ANTHROPIC_API_KEY=sk-ant-...
+git push heroku main
+```
 
-### Operaciones
-- KPIs de rendimiento
-- Análisis de eficiencia
-- Gestión de inventario
+### Tests
 
-### Recursos Humanos
-- Encuestas de clima laboral
-- Análisis de rotación
-- Performance reviews
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
 
-### Finanzas
-- Análisis de gastos
-- Proyecciones
-- Comparativas presupuestarias
+## Solución de problemas
 
-## 📞 Soporte
+| Problema | Solución |
+|----------|----------|
+| `Invalid API Key` | Verificar clave en [console.anthropic.com](https://console.anthropic.com) |
+| Error al leer archivo | Comprobar que sea .xlsx/.xls/.csv con cabeceras en la primera fila |
+| Error al generar PDF | `pip install --upgrade reportlab pillow` |
+| Puerto en uso | `streamlit run app.py --server.port 8502` |
 
-Para consultas o reportar issues, contacta al desarrollador.
+## Seguridad
 
-## 📄 Licencia
-
-Este proyecto es de uso libre para propósitos educativos y comerciales.
-
----
-
-**Desarrollado con ❤️ usando Claude 4.5 de Anthropic**
+- La API Key nunca se persiste en disco.
+- Los archivos se procesan en memoria, sin almacenamiento.
+- Conexión cifrada con la API de Anthropic.
+- Sin telemetría ni tracking externo.

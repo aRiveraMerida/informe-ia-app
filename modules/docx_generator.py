@@ -36,60 +36,98 @@ class DOCXReportGenerator:
         """Configura estilos personalizados del documento."""
         styles = self.document.styles
         
-        # Título principal
+        # Título principal — Movimer
         title_style = styles['Title']
         title_style.font.size = Pt(28)
         title_style.font.bold = True
-        title_style.font.color.rgb = RGBColor(31, 78, 120)
+        title_style.font.color.rgb = RGBColor(112, 174, 0)
         
         # Heading 1
         h1_style = styles['Heading 1']
         h1_style.font.size = Pt(18)
         h1_style.font.bold = True
-        h1_style.font.color.rgb = RGBColor(31, 78, 120)
+        h1_style.font.color.rgb = RGBColor(112, 174, 0)
         
         # Heading 2
         h2_style = styles['Heading 2']
         h2_style.font.size = Pt(14)
         h2_style.font.bold = True
-        h2_style.font.color.rgb = RGBColor(46, 92, 138)
+        h2_style.font.color.rgb = RGBColor(61, 107, 0)
         
         # Heading 3
         h3_style = styles['Heading 3']
         h3_style.font.size = Pt(12)
         h3_style.font.bold = True
-        h3_style.font.color.rgb = RGBColor(68, 114, 160)
+        h3_style.font.color.rgb = RGBColor(74, 140, 0)
     
     def generate(
         self,
         analysis_text: str,
-        metadata: Dict[str, Any]
+        metadata: Dict[str, Any],
+        chart_images: Optional[List[tuple]] = None,
+        quantitative_analysis: Optional[str] = None,
+        report_sections: Optional[List] = None,
     ) -> bytes:
         """
-        Genera el documento DOCX completo.
-        
-        Args:
-            analysis_text: Texto del análisis en markdown
-            metadata: Metadatos del informe
-            
-        Returns:
-            Bytes del documento DOCX
+        Genera un DOCX unificado profesional.
+
+        Si se proporcionan report_sections (List[ReportSection]), se usa el
+        flujo de secciones con gráficos inline. Si no, se usa el flujo legacy.
+
+        Estructura:
+          1. Portada
+          2. Secciones del informe con gráficos inline
+          3. Anexo estadístico
+          4. Nota de generación
         """
-        # Portada
+        # 1. Portada
         self._add_cover_page(metadata)
-        
-        # Contenido
-        self._parse_markdown(analysis_text)
-        
-        # Pie de página con información de generación
+
+        # 2. Informe con gráficos inline
+        if report_sections:
+            self._add_sections_with_charts(report_sections)
+        else:
+            # Flujo legacy
+            self._parse_markdown(analysis_text)
+            if chart_images:
+                self._add_charts_section(chart_images)
+
+        # 3. Nota de generación
         self._add_footer_info(metadata)
-        
-        # Guardar a buffer
+
         buffer = BytesIO()
         self.document.save(buffer)
         buffer.seek(0)
-        
         return buffer.getvalue()
+
+    def _add_sections_with_charts(self, report_sections: List):
+        """Agrega secciones del informe con gráficos inline."""
+        for section in report_sections:
+            # Heading
+            if section.heading:
+                self.document.add_heading(section.heading, level=2)
+
+            # Texto de la sección
+            if section.text:
+                self._parse_markdown(section.text)
+
+            # Gráficos inline
+            if section.chart_images:
+                self.document.add_paragraph()  # Espacio
+                for chart_title, png_bytes in section.chart_images:
+                    try:
+                        img_stream = BytesIO(png_bytes)
+                        self.document.add_picture(img_stream, width=Inches(5.8))
+                        # Pie de gráfico
+                        caption = self.document.add_paragraph()
+                        caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        run = caption.add_run(chart_title)
+                        run.font.size = Pt(8)
+                        run.font.italic = True
+                        run.font.color.rgb = RGBColor(128, 128, 128)
+                    except Exception as e:
+                        logger.warning("No se pudo insertar gráfico '%s': %s", chart_title, e)
+                self.document.add_paragraph()  # Espacio tras gráficos
     
     def _add_cover_page(self, metadata: Dict[str, Any]):
         """Agrega portada al documento."""
@@ -110,7 +148,7 @@ class DOCXReportGenerator:
         run = subtitle.add_run(self.client_name)
         run.font.size = Pt(18)
         run.font.bold = True
-        run.font.color.rgb = RGBColor(46, 92, 138)
+        run.font.color.rgb = RGBColor(61, 107, 0)
         
         # Espacio
         self.document.add_paragraph()
@@ -251,12 +289,34 @@ class DOCXReportGenerator:
                         # Fondo azul para header
                         from docx.oxml.ns import nsdecls
                         from docx.oxml import parse_xml
-                        shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="1F4E78"/>')
+                        shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="70AE00"/>')
                         cell._tc.get_or_add_tcPr().append(shading)
         
         # Espacio después de tabla
         self.document.add_paragraph()
     
+    def _add_charts_section(self, chart_images: List[tuple]):
+        """Agrega visualizaciones integradas tras el informe ejecutivo."""
+        self.document.add_page_break()
+        self.document.add_heading("Visualizaciones de Datos", level=1)
+        intro = self.document.add_paragraph()
+        run = intro.add_run(
+            "Los siguientes gráficos complementan el análisis presentado "
+            "en las secciones anteriores."
+        )
+        run.font.size = Pt(10)
+        run.font.color.rgb = RGBColor(100, 100, 100)
+        self.document.add_paragraph()
+
+        for title, png_bytes in chart_images:
+            self.document.add_heading(title, level=3)
+            try:
+                img_stream = BytesIO(png_bytes)
+                self.document.add_picture(img_stream, width=Inches(6))
+                self.document.add_paragraph()
+            except Exception as e:
+                logger.warning(f"No se pudo insertar gráfico '{title}': {e}")
+
     def _add_footer_info(self, metadata: Dict[str, Any]):
         """Agrega información de generación al final."""
         self.document.add_paragraph()

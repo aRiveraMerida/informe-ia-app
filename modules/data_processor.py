@@ -104,7 +104,7 @@ class DataProcessor:
                 # Solo aplicar si la conversión tuvo éxito en al menos algunos valores
                 if numeric_result.notna().any():
                     df[col] = numeric_result
-            except:
+            except Exception:
                 pass
             
             # Intentar convertir a datetime (con formato inferido silenciosamente)
@@ -121,7 +121,7 @@ class DataProcessor:
                     # Solo aplicar si la conversión tuvo éxito en al menos algunos valores
                     if datetime_result.notna().any() and datetime_result.notna().sum() > len(df) * 0.5:
                         df[col] = datetime_result
-                except:
+                except Exception:
                     pass
         
         return df
@@ -138,7 +138,7 @@ class DataProcessor:
                 'categorical_columns': list(df.select_dtypes(include=['object']).columns),
                 'datetime_columns': list(df.select_dtypes(include=['datetime']).columns),
                 'missing_values': df.isnull().sum().to_dict(),
-                'completeness_pct': round((df.count().sum() / (len(df) * len(df.columns))) * 100, 2)
+                'completeness_pct': round((df.count().sum() / max(1, len(df) * len(df.columns))) * 100, 2)
             }
     
     def _generate_metadata(self):
